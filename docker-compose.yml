@@ -3,9 +3,13 @@ version: "3"
 volumes:
   nextcloud:
   db:
+  certs:
+  html:
+  vhost:
+  dhparam:
 
 services:
-  db:
+  dbNextCloud:
     image: mariadb:10.6
     restart: always
     command: --transaction-isolation=READ-COMMITTED --log-bin=binlog --binlog-format=ROW
@@ -21,16 +25,16 @@ services:
     image: nextcloud
     restart: always
     ports:
-      - 8080:80
+      - 80:80
     links:
-      - db
+      - dbNextCloud
     volumes:
       - nextcloud:/var/www/html
     environment:
       - MYSQL_PASSWORD=NextCloudDb
       - MYSQL_DATABASE=nextcloud
       - MYSQL_USER=nextcloud
-      - MYSQL_HOST=db
+      - MYSQL_HOST=dbNextCloud
 
   onlyoffice-documentserver:
     image: onlyoffice/documentserver:latest
@@ -45,3 +49,64 @@ services:
       - ./onlyoffice/lib:/var/lib/onlyoffice
       - ./onlyoffice/logs:/var/log/onlyoffice
       - ./onlyoffice/db:/var/lib/postgresql
+
+  dbSymfony:
+    image: docker.io/bitnami/mariadb:11.2
+    environment:
+      # ALLOW_EMPTY_PASSWORD is recommended only for development.
+      - ALLOW_EMPTY_PASSWORD=yes
+      - MARIADB_USER=bn_myapp
+      - MARIADB_DATABASE=bitnami_myapp
+  symfony:
+    image: docker.io/bitnami/symfony:7.0
+    ports:
+      - "80:8000"
+    environment:
+      # ALLOW_EMPTY_PASSWORD is recommended only for development.
+      - ALLOW_EMPTY_PASSWORD=yes
+      - SYMFONY_DATABASE_HOST=mariadb
+      - SYMFONY_DATABASE_PORT_NUMBER=3306
+      - SYMFONY_DATABASE_USER=bn_myapp
+      - SYMFONY_DATABASE_NAME=bitnami_myapp
+      - SYMFONY_PROJECT_SKELETON=symfony/skeleton
+    volumes:
+      - "./my-project:/app"
+    depends_on:
+      - dbSymfony
+
+  reverse-proxy:
+    image: "jwilder/nginx-proxy:latest"
+    container_name: "reverse-proxy"
+    volumes:
+      - "html:/usr/share/nginx/html"
+      - "dhparam:/etc/nginx/dhparam"
+      - "vhost:/etc/nginx/vhost.d"
+      - "certs:/etc/nginx/certs"
+      - "/run/docker.sock:/tmp/docker.sock:ro"
+    restart: "always"
+    networks:
+      - "net"
+    ports:
+      - "80:80"
+      - "443:443"
+  letsencrypt:
+    image: "jrcs/letsencrypt-nginx-proxy-companion:latest"
+    container_name: "letsencrypt-helper"
+    volumes:
+      - "html:/usr/share/nginx/html"
+      - "dhparam:/etc/nginx/dhparam"
+      - "vhost:/etc/nginx/vhost.d"
+      - "certs:/etc/nginx/certs"
+      - "/run/docker.sock:/var/run/docker.sock:ro"
+    environment:
+      NGINX_PROXY_CONTAINER: "reverse-proxy"
+      DEFAULT_EMAIL: "user@domain.com"
+    restart: "always"
+    depends_on:
+      - "reverse-proxy"
+    networks:
+      - "net"
+
+networks:
+  net:
+    external: true
